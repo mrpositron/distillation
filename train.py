@@ -16,10 +16,9 @@ import copy
 
 import wandb
 
-def run(loader_dict, model, epochs, device, folder2save, wb = False):
+def run(loader_dict, model, epochs, device, folder2save, wb = False, val_epoch = 200):
 	criterion = nn.CrossEntropyLoss()
 	optimizer = optim.Adam(model.parameters(), lr = 0.001)
-	scheduler = optim.lr_scheduler.StepLR(optimizer, 100, 0.5)
 
 	best_model = []
 	min_loss = float('inf')
@@ -30,7 +29,10 @@ def run(loader_dict, model, epochs, device, folder2save, wb = False):
 		total = 0
 
 		for mode in ['train', 'val']:
-			
+			# no point of checking validation each time
+			if mode == 'val' and epoch <= val_epoch:
+				continue
+
 			if mode == 'train':
 				model.train()
 			else:
@@ -41,7 +43,12 @@ def run(loader_dict, model, epochs, device, folder2save, wb = False):
 				inputs, targets = inputs.to(device), targets.to(device)
 				if mode == 'train':
 					optimizer.zero_grad()
-				outputs = model(inputs)
+				# adding torch.no_grad() speeds up inference a bit
+				if mode == 'train':
+					outputs = model(inputs)
+				else:
+					with torch.no_grad():
+						outputs = model(inputs)
 				loss = criterion(outputs, targets)
 				if mode == 'train':
 					loss.backward()
@@ -60,30 +67,30 @@ def run(loader_dict, model, epochs, device, folder2save, wb = False):
 					wandb.log({epoch_logging: epoch})
 			print('Mode: %s | Epoch: %d/%d| Batch: %d/%d | Loss: %.3f | Acc: %.3f ' % (mode, epoch+1, epochs, batch_idx+1, len(loader), cum_loss, correct/total))
 
-		if mode == 'train':
-			scheduler.step()
 
-		if mode == 'val':
-			if cum_loss < min_loss:
+			# save the best model
+			if mode == 'val' and cum_loss < min_loss:
 				temp_model = copy.deepcopy(model)
 				min_loss = cum_loss
 				if best_model:
 					best_model.pop()
 				best_model.append((temp_model, correct/total))
 
-	the_best_model, the_best_acc = best_model.pop()
-	path = './' + folder2save + '/best_model.pt'
-	print(f'Saved model has accuracy {correct/total}')
-	torch.save(the_best_model, path)
+	if epoch <= val_epoch:
+		return
+	model2save, acc = best_model.pop()
+	path2save = './' + folder2save + '/best_model.pt'
+	print(f'Saved model has accuracy {acc}')
+	torch.save(model2save, path2save)
 
 
 if __name__ == "__main__":
-	parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
+	parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Pre-Training')
 	parser.add_argument('--seed', default = 0, type = int)
 	parser.add_argument('--folder2save', default= 'model0', type = str )
 	parser.add_argument('--wb', default = False, type = bool)
 	parser.add_argument('--gpu', default = 0, type = int)
-	parser.add_argument('--num_epochs', default = 1, type = int)
+	parser.add_argument('--num_epochs', default = 300, type = int)
 	args = parser.parse_args()
 
 	torch.manual_seed(args.seed)
@@ -109,6 +116,8 @@ if __name__ == "__main__":
 
 	loader_dict = {'train': train_loader, 
 				   'val': val_loader}
+	# we should not load the model pretrained on ImageNet
+	# model should learn from the randomly initialized weights
 	model = models.resnet18()
 
 	model.fc = nn.Sequential(
@@ -117,10 +126,11 @@ if __name__ == "__main__":
 	)
 
 	model = model.to(device)
-	#
+	# initialize wandb session if is needed 
 	if args.wb:
 		wandb.init(project="cifar10")
 		wandb.config.update(args)
+	# start the training
 	run(loader_dict, model, epochs= args.num_epochs, device= device, folder2save = args.folder2save, wb = args.wb)
 
 		
