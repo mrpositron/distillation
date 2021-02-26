@@ -20,7 +20,7 @@ def run(loader_dict, new_model, target_model, epochs, device,
 	path2save, wb = False, val_epoch = -1):
 
 	stack2save = []
-	min_loss = float('inf')
+	max_val_acc = .0
 
 	mse_criterion = nn.MSELoss()
 	ce_criterion = nn.CrossEntropyLoss()
@@ -37,6 +37,9 @@ def run(loader_dict, new_model, target_model, epochs, device,
 		total = {'train': 0, 'val': 0}
 
 		for mode in ['train', 'val']:
+			if mode == 'val' and epoch < val_epoch:
+				continue
+
 			if mode == 'train':
 				new_model.train()
 			else:
@@ -72,6 +75,7 @@ def run(loader_dict, new_model, target_model, epochs, device,
 				_, predicted = outputs.max(1)
 				total[mode] += targets.size(0)
 				correct[mode] += predicted.eq(targets).sum().item()
+				#break
 		
 			print('Mode: %s | Epoch: %d/%d| MSE Loss: %.6f | Cross Entropy Loss %.3f | Acc: %.3f ' 
 				% (mode, epoch+1, epochs, 1e6 *  (mse_cum_loss[mode] / total[mode]), 
@@ -91,12 +95,13 @@ def run(loader_dict, new_model, target_model, epochs, device,
 					epoch_log = mode + "/epoch"
 					wandb.log({epoch_log: epoch})
 			
-			if mode == 'val' and ce_cum_loss[mode] < min_loss:
+			# save the best model
+			if mode == 'val' and (correct[mode]/total[mode]) > max_val_acc:
 				temp_model = copy.deepcopy(new_model)
-				min_loss = ce_cum_loss[mode]
+				max_val_acc = correct[mode]/total[mode]
 				if stack2save:
 					stack2save.pop()
-				stack2save.append((temp_model, correct[mode]/total[mode]))
+				stack2save.append((temp_model, max_val_acc))
 	# save the best model
 	if epochs <= val_epoch:
 		return
@@ -106,7 +111,7 @@ def run(loader_dict, new_model, target_model, epochs, device,
 
 
 if __name__ == "__main__":
-	parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Pre-Training')
+	parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Self-Distillation')
 	parser.add_argument('--seed', default = 42, type = int)
 	parser.add_argument('--path2load', default= '', type = str )
 	parser.add_argument('--path2save', default= '', type = str )
@@ -122,10 +127,10 @@ if __name__ == "__main__":
 	assert os.path.exists(path.parent), "The folder under which you want to save the weights does not exist"
 
 	# For reproducibility
-	torch.manual_seed(42)
-	torch.cuda.manual_seed(42)
-	torch.cuda.manual_seed_all(42)
-	torch.backends.cudnn.deterministic=True
+	torch.manual_seed(args.seed)
+	torch.cuda.manual_seed(args.seed)
+	torch.cuda.manual_seed_all(args.seed)
+	#torch.backends.cudnn.deterministic=True
 	# Initialize wandb session if necessary
 	if args.wb:
 		wandb.init(project="cifar10_self_distill")
