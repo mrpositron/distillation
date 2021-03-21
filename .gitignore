@@ -3,3 +3,6 @@ wandb
 model[0-99]
 *.pt
 *.pth
+*.ipynb
+__pycache__
+.ipynb_checkpoints

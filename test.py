@@ -14,7 +14,7 @@ from tqdm import tqdm
 def run_test(model, loader, device):
 	model.eval()
 	correct, total = 0, 0
-	for batch_idx, (inputs, targets) in enumerate(tqdm(loader)):
+	for _, (inputs, targets) in enumerate(tqdm(loader)):
 		inputs, targets = inputs.to(device), targets.to(device)
 		outputs = model(inputs)
 		_, predicted = outputs.max(1)
@@ -41,16 +41,14 @@ if __name__ == "__main__":
 	dataset = torchvision.datasets.CIFAR10(root='./data', train=False,
 		download=True, transform=dataset_transforms)
 	loader = DataLoader(dataset, batch_size = 128, shuffle = False, 
-		num_workers = 16, pin_memory = True)
+		num_workers = 16, pin_memory = True, generator = torch.Generator().manual_seed(42))
 	# define the model
 	model = models.resnet18()
-	model.fc = nn.Sequential(
-		nn.Linear(512, 10),
-		nn.Softmax(dim = 0),
-	)
+	model.fc = nn.Linear(512, 10)
+	
 	# load the weights
 	model = torch.load(path)
-	model = model.to(device)
+	model.to(device)
 	# check the accuracy
 	acc = run_test(model, loader, device)
 	print(f'Accuracy is {100*acc}')

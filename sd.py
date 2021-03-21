@@ -1,6 +1,7 @@
 # Load PyTorch Framework
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
@@ -15,6 +16,7 @@ from pathlib import Path
 
 import wandb
 
+from utils import *
 
 def run(loader_dict, new_model, target_model, epochs, device,
 	path2save, wb = False, val_epoch = -1):
@@ -22,17 +24,16 @@ def run(loader_dict, new_model, target_model, epochs, device,
 	stack2save = []
 	max_val_acc = .0
 
-	mse_criterion = nn.MSELoss()
 	ce_criterion = nn.CrossEntropyLoss()
 	optimizer = optim.Adam(new_model.parameters(), lr = 0.001)
-
+	# target_model should be in eval state
 	target_model.eval()
 
 	for epoch in range(epochs):
-		# mse loss
-		mse_cum_loss = {'train': .0, 'val': .0}
-		# cross entropy loss
-		ce_cum_loss  ={'train': .0, 'val': .0}
+		# cross entropy loss between outputs and targets
+		cum_ce_loss_1 = {'train': .0, 'val': .0}
+		# cross entropy loss between outputs and labels
+		cum_ce_loss_2  ={'train': .0, 'val': .0}
 		correct = {'train': 0, 'val': 0}
 		total = {'train': 0, 'val': 0}
 
@@ -46,9 +47,9 @@ def run(loader_dict, new_model, target_model, epochs, device,
 				new_model.eval()
 
 			loader = loader_dict[mode]
-			for batch_idx, (inputs, targets) in enumerate(tqdm(loader)):
+			for batch_idx, (inputs, labels) in enumerate(tqdm(loader)):
 				batch_size = inputs.shape[0]
-				inputs, targets = inputs.to(device), targets.to(device)
+				inputs, labels = inputs.to(device), labels.to(device)
 				if mode == 'train':
 					optimizer.zero_grad()
 				
@@ -59,37 +60,36 @@ def run(loader_dict, new_model, target_model, epochs, device,
 						outputs = new_model(inputs)
 
 				with torch.no_grad():
-					y = target_model(inputs)
-				# compute mse loss
-				mse_loss = mse_criterion(outputs, y)
+					targets = target_model(inputs)
+				# compute cross entropy loss between outputs and targets
+				ce_loss_1 = categorical_cross_entropy(F.softmax(outputs, dim = 1), F.softmax(targets, dim = 1))
 
 				if mode == 'train':
-					mse_loss.backward()
+					ce_loss_1.backward()
 					optimizer.step()
-				# compute cross entropy loss
-				ce_loss = ce_criterion(outputs, targets)
+				# compute cross entropy loss between outputs and true labels
+				ce_loss_2 = ce_criterion(outputs, labels)
 
-				mse_cum_loss[mode] += mse_loss.item()
-				ce_cum_loss[mode] += ce_loss.item()
+				cum_ce_loss_1[mode] += ce_loss_1.item()
+				cum_ce_loss_2[mode] += ce_loss_2.item()
 
 				_, predicted = outputs.max(1)
-				total[mode] += targets.size(0)
-				correct[mode] += predicted.eq(targets).sum().item()
-				#break
-		
-			print('Mode: %s | Epoch: %d/%d| MSE Loss: %.6f | Cross Entropy Loss %.3f | Acc: %.3f ' 
-				% (mode, epoch+1, epochs, 1e6 *  (mse_cum_loss[mode] / total[mode]), 
-					1e3 * (ce_cum_loss[mode] / total[mode]), (correct[mode]/total[mode]) ))
+				total[mode] += labels.size(0)
+				correct[mode] += predicted.eq(labels).sum().item()
+			
+			print('Mode: %s | Epoch: %d/%d| Self Cross Entropy Loss: %.6f | Cross Entropy Loss %.3f | Acc: %.3f ' 
+				% (mode, epoch+1, epochs, 1e3 *  (cum_ce_loss_1[mode] / total[mode]), 
+					1e3 * (cum_ce_loss_2[mode] / total[mode]), (correct[mode]/total[mode]) ))
 			# wandb logging
 
 			if wb:
-				mse_loss_log = mode + "/mse_loss"
-				ce_loss_log = mode + "/ce_loss"
-				acc_log = mode + "/acc"
+				log_cum_ce_loss_1 = mode + "/ce_loss_1"
+				log_cum_ce_loss_2 = mode + "/ce_loss_2"
+				log_acc = mode + "/acc"
 				wandb.log({
-					mse_loss_log: 1e6 *  (mse_cum_loss[mode] / total[mode]),
-					ce_loss_log: 1e3 * (ce_cum_loss[mode] / total[mode]),
-					acc_log: 1e2 * (correct[mode]/total[mode]),
+					log_cum_ce_loss_1: 1e3 *  (cum_ce_loss_1[mode] / total[mode]),
+					log_cum_ce_loss_2: 1e3 * (cum_ce_loss_2[mode] / total[mode]),
+					log_acc: 1e2 * (correct[mode]/total[mode]),
 				})
 				if mode == "train":
 					epoch_log = mode + "/epoch"
@@ -127,60 +127,27 @@ if __name__ == "__main__":
 	assert os.path.exists(path.parent), "The folder under which you want to save the weights does not exist"
 
 	# For reproducibility
-	torch.manual_seed(args.seed)
-	torch.cuda.manual_seed(args.seed)
-	torch.cuda.manual_seed_all(args.seed)
-	#torch.backends.cudnn.deterministic=True
+	seed_everything(args.seed)
+	
 	# Initialize wandb session if necessary
 	if args.wb:
-		wandb.init(project="cifar10_self_distill")
+		wandb.init(project="cifar10_sd")
 		wandb.config.update(args)
 	# Set the device
 	device = torch.device("cuda:" + str(args.gpu))
 	# Define the target model
 	target_model = models.resnet18()
-	target_model.fc = nn.Sequential(
-		nn.Linear(512, 10),
-		nn.Softmax(dim = 0),
-	)
-	## Load the weights to target_model
+	target_model.fc = nn.Linear(512, 10)
 	target_model = torch.load(args.path2load)
 	target_model.to(device)
 	## Freeze all the weights
 	for params in target_model.parameters():
 		params.requires_grad = False
-
-
-	
-	# Get the data
-	dataset_transforms = transforms.Compose([
-		transforms.Resize(224),
-		transforms.ToTensor(),
-		transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-	])
-	## Size of dataset is 50000
-	dataset = torchvision.datasets.CIFAR10(root='./data', train=True,
-		download=True, transform=dataset_transforms)
-	## Split the data to training and validation data
-	## in the proportion 90/10, as during pretraining
-	train_size = int(0.9 * len(dataset))
-	val_size = len(dataset) - train_size
-	train_data, val_data = random_split(dataset, [train_size, val_size], generator = torch.Generator().manual_seed(42))
-
-	train_loader = DataLoader(train_data, batch_size = 128, shuffle = True, 
-		num_workers = 8, pin_memory = True, generator = torch.Generator().manual_seed(42))
-	val_loader = DataLoader(val_data, batch_size = 128, shuffle = False, 
-		num_workers = 8, pin_memory = True, generator = torch.Generator().manual_seed(42) )
-
-	
-	loader_dict = {'train': train_loader, 
-		'val': val_loader}
+	# Get loader dict
+	loader_dict = get_loader_dict()[0]
 	# Define the new model
 	new_model = models.resnet18()
-	new_model.fc = nn.Sequential(
-		nn.Linear(512, 10),
-		nn.Softmax(dim = 0),
-	)
+	new_model.fc = nn.Linear(512, 10)
 	new_model.to(device)
 	# Run the training procedure
 	run(loader_dict, new_model = new_model, target_model= target_model, epochs= args.num_epochs, device= device, 

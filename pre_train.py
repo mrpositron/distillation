@@ -3,9 +3,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision
-import torchvision.transforms as transforms
 import torchvision.models as models
-from torch.utils.data import random_split, DataLoader
 
 from tqdm import tqdm
 
@@ -13,6 +11,7 @@ import argparse
 import os
 from pathlib import Path
 
+from utils import *
 
 import copy
 
@@ -24,7 +23,7 @@ def run_train(loader_dict, model, epochs, device, path2save, wb = False, val_epo
 	criterion = nn.CrossEntropyLoss()
 	optimizer = optim.Adam(model.parameters(), lr = 0.001)
 
-	best_model = []
+	stack2save = []
 	max_val_acc = .0
 
 	for epoch in range(epochs):	
@@ -44,9 +43,9 @@ def run_train(loader_dict, model, epochs, device, path2save, wb = False, val_epo
 				model.eval()
 
 			loader = loader_dict[mode]
-			for batch_idx, (inputs, targets) in enumerate(tqdm(loader)):
+			for batch_idx, (inputs, labels) in enumerate(tqdm(loader)):
 				batch_size = inputs.shape[0]
-				inputs, targets = inputs.to(device), targets.to(device)
+				inputs, labels = inputs.to(device), labels.to(device)
 				if mode == 'train':
 					optimizer.zero_grad()
 				# adding torch.no_grad() speeds up inference a bit
@@ -55,15 +54,15 @@ def run_train(loader_dict, model, epochs, device, path2save, wb = False, val_epo
 				else:
 					with torch.no_grad():
 						outputs = model(inputs)
-				loss = criterion(outputs, targets)
+				loss = criterion(outputs, labels)
 				if mode == 'train':
 					loss.backward()
 					optimizer.step()
 
 				cum_loss[mode] += loss.item()
 				_, predicted = outputs.max(1)
-				total[mode] += targets.size(0)
-				correct[mode] += predicted.eq(targets).sum().item()
+				total[mode] += labels.size(0)
+				correct[mode] += predicted.eq(labels).sum().item()
 			if wb:
 				loss_logging = mode + "/loss"
 				acc_logging = mode + "/acc"
@@ -79,13 +78,13 @@ def run_train(loader_dict, model, epochs, device, path2save, wb = False, val_epo
 			if mode == 'val' and (correct[mode]/total[mode]) > max_val_acc:
 				temp_model = copy.deepcopy(model)
 				max_val_acc = correct[mode]/total[mode]
-				if best_model:
-					best_model.pop()
-				best_model.append((temp_model, max_val_acc))
+				if stack2save:
+					stack2save.pop()
+				stack2save.append((temp_model, max_val_acc))
 
 	if epochs <= val_epoch:
 		return
-	model2save, acc = best_model.pop()
+	model2save, acc = stack2save.pop()
 	print(f'Saved model has accuracy {acc}')
 	torch.save(model2save, path2save)
 
@@ -100,7 +99,8 @@ if __name__ == "__main__":
 	parser.add_argument('--val_epoch', default=-1, type = int)
 	args = parser.parse_args()
 
-	torch.manual_seed(args.seed)
+	# For reproducibility
+	seed_everything(args.seed)
 
 	# Assert that folder exists
 	assert ".pt" in args.path2save or ".pth" in args.path2save, "The saved model should have following extensions: .pt ot .pth"
@@ -108,46 +108,20 @@ if __name__ == "__main__":
 	assert os.path.exists(path.parent), "The folder under which you want to save the weights does not exist"
 	# Define the device
 	device = torch.device("cuda:" + str(args.gpu))
-	# Get the data
-	dataset_transforms = transforms.Compose([
-		transforms.Resize(224),
-		transforms.ToTensor(),
-		transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-	])
-	# size of dataset is 50000
-	dataset = torchvision.datasets.CIFAR10(root='./data', train=True,
-		download=True, transform=dataset_transforms)
-	# Split the data to training and validation data
-	# in the proportion 90/10
-	# in other words, there are 45000 images in trainig data and 5000 images in the validation data
-	train_size = int(0.9 * len(dataset))
-	val_size = len(dataset) - train_size
-	train_data, val_data = random_split(dataset, [train_size, val_size], generator = torch.Generator().manual_seed(42))
-
-	train_loader = DataLoader(train_data, batch_size = 128, shuffle = True, 
-		num_workers = 8, pin_memory = True, generator = torch.Generator().manual_seed(42))
-	val_loader = DataLoader(val_data, batch_size = 128, shuffle = False, 
-		num_workers = 8, pin_memory = True, generator = torch.Generator().manual_seed(42) )
-
-	
-	loader_dict = {'train': train_loader, 
-				   'val': val_loader}
+	# Get the dataloader
+	loader_dict = get_loader_dict()[0]
 	# we should not load the model pretrained on ImageNet
 	# model should learn from the randomly initialized weights
 	model = models.resnet18()
-	# we should cahnge the fully connected layer
-	model.fc = nn.Sequential(
-		nn.Linear(512, 10),
-		nn.Softmax(dim = 0),
-	)
-	# send it to the device
-	model = model.to(device)
+	model.fc = nn.Linear(512, 10)
+	model.to(device)
 	# initialize wandb session if is needed 
 	if args.wb:
 		# name the project whatever you want
 		wandb.init(project="cifar10")
 		wandb.config.update(args)
 	# start the training
-	run_train(loader_dict, model, epochs= args.num_epochs, device= device, path2save = args.path2save, wb = args.wb, val_epoch = args.val_epoch)
+	run_train(loader_dict, model, epochs= args.num_epochs, device= device, 
+		path2save = args.path2save, wb = args.wb, val_epoch = args.val_epoch)
 
 
