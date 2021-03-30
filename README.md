@@ -56,8 +56,8 @@ The table shows the results of using the model on the left as a teacher on the r
 
 ## Discussion
 
-It is clear to see that knowledge and self-distillation works. The accuracy on the test set goes up for about ~1% using self-distillation. The ensemble model gives us ~2.5-3% boost.
-Knowledge distillation also works. However, I imagined that the boost will be much more significant. One interesting thing to note is that if we will create an ensemble out of the models produced in self-distillation, then the accuracy will be 89.38.
+It is clear to see that ensemble, knowledge and self-distillation works. The accuracy on the test set goes up for about ~1% using self-distillation. The ensemble model gives us ~2.5-3% boost.
+Knowledge distillation works as seen from the results. However, I expected more significant boost. One interesting thing to note is that if we will create an ensemble from the models produced in self-distillation, then the accuracy will be 89.38.
 
 
 
