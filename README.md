@@ -1,5 +1,7 @@
 # Self-Distillation and Knowledge Distillation Experiments
 
+Detailed report can be found [here](https://wandb.ai/mrpositron/cifar10_sd/reports/Self-Distillation-and-Knowledge-Distillation-Experiments--VmlldzoxNTEwOTQ0).
+
 ## Introduction
 
 There are three mysteries in deep learning. Highlighted in the recent blog by Zeyuan Allen-Zhu and Yuanzhi Li [1]. They are: ensemble, self-distillation, and knowledge distillation. In the blog they discuss the mysteries around them and analyze why they actually work. Inspired by the fact that these ideas work, and motivated to validate them. I ran some experiments on my own. Below you can see the results. 
@@ -52,7 +54,7 @@ In the table below you can see the accuracies produced by the self-distillaion.
 | 3    |               86.38 |         86.17 | 13   |               86.46 |         85.32 |
 | 4    |                  87 |         86.39 | 14   |               87.38 |         87.08 |
 
-The table shows the results of using the model on the left as a teacher on the right. Models on the left are identical to those used before.
+The table shows the results of using the model on the left as a teacher (TN, i.e. Teacher Network), and student (SN, i.e. Student Network)on the right. Models on the left are identical to those used before.
 
 ## Discussion
 
